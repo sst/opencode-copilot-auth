@@ -1,0 +1,16 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "opencode-anthropic-auth",
+      "devDependencies": {
+        "@opencode-ai/plugin": "latest",
+      },
+    },
+  },
+  "packages": {
+    "@opencode-ai/plugin": ["@opencode-ai/plugin@0.5.8", "", { "dependencies": { "@opencode-ai/sdk": "0.5.5" } }, "sha512-5YS/8WMnov0JIYlAT53ooJ65jYFlyTLkiqo4ToLUSFBKWBTvFUpx1pbreMZQjFMmY8vKF4uKgTEvwKg5mgCpUQ=="],
+
+    "@opencode-ai/sdk": ["@opencode-ai/sdk@0.5.5", "", {}, "sha512-LjFhG6glh2mDpvyX+NDGdO1hJjUn80jM7i4Fty5+XMmdeDlGRuEaZ1rlVc/g9bPw3IFihV5iihJejoJr8R+dPg=="],
+  }
+}

@@ -13,7 +13,7 @@ export async function CopilotAuthPlugin({ client }) {
     "Editor-Plugin-Version": "copilot-chat/0.31.2",
     "Copilot-Integration-Id": "vscode-chat",
   };
-  const RESPONSES_API_TOOL_TYPES = ["file_search_call", "computer_call", "computer_call_output", "web_search_call", "function_call", "function_call_output", "image_generation_call", "code_interpreter_call", "local_shell_call", "local_shell_call_output", "mcp_list_tools", "mcp_approval_request", "mcp_approval_response", "mcp_call"];
+  const RESPONSES_API_ALTERNATE_INPUT_TYPES = ["file_search_call", "computer_call", "computer_call_output", "web_search_call", "function_call", "function_call_output", "image_generation_call", "code_interpreter_call", "local_shell_call", "local_shell_call_output", "mcp_list_tools", "mcp_approval_request", "mcp_approval_response", "mcp_call", "reasoning"];
 
   return {
     auth: {
@@ -82,7 +82,7 @@ export async function CopilotAuthPlugin({ client }) {
 
               if(body?.input) {
                 isAgentCall = body.input.some(
-                  (input) => (input.role && ["assistant"].includes(input.role)) || (input.type && RESPONSES_API_TOOL_TYPES.includes(input.type)),
+                  (input) => (input.role && ["assistant"].includes(input.role)) || (input.type && RESPONSES_API_ALTERNATE_INPUT_TYPES.includes(input.type)),
                 )
                 isVisionRequest = body.input.some(
                   (input) =>

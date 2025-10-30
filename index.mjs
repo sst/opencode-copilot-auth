@@ -8,9 +8,9 @@ export async function CopilotAuthPlugin({ client }) {
   const COPILOT_API_KEY_URL =
     "https://api.github.com/copilot_internal/v2/token";
   const HEADERS = {
-    "User-Agent": "GitHubCopilotChat/0.31.2",
-    "Editor-Version": "vscode/1.104.1",
-    "Editor-Plugin-Version": "copilot-chat/0.31.2",
+    "User-Agent": "GitHubCopilotChat/0.35.0",
+    "Editor-Version": "vscode/1.99.3",
+    "Editor-Plugin-Version": "copilot-chat/0.35.0",
     "Copilot-Integration-Id": "vscode-chat",
   };
 
@@ -107,7 +107,7 @@ export async function CopilotAuthPlugin({ client }) {
               headers: {
                 Accept: "application/json",
                 "Content-Type": "application/json",
-                "User-Agent": "GitHubCopilotChat/0.31.2",
+                "User-Agent": "GitHubCopilotChat/0.35.0",
               },
               body: JSON.stringify({
                 client_id: CLIENT_ID,
@@ -126,7 +126,7 @@ export async function CopilotAuthPlugin({ client }) {
                     headers: {
                       Accept: "application/json",
                       "Content-Type": "application/json",
-                      "User-Agent": "GitHubCopilotChat/0.31.2",
+                      "User-Agent": "GitHubCopilotChat/0.35.0",
                     },
                     body: JSON.stringify({
                       client_id: CLIENT_ID,

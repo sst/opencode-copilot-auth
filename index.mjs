@@ -1,7 +1,4 @@
-/**
- * @type {import('@opencode-ai/plugin').Plugin}
- */
-export async function CopilotAuthPlugin({ client }) {
+function createCopilotPlugin(client, { providerId, isEnterprise }) {
   const CLIENT_ID = "Iv1.b507a08c87ecfe98";
   const HEADERS = {
     "User-Agent": "GitHubCopilotChat/0.35.0",
@@ -10,53 +7,23 @@ export async function CopilotAuthPlugin({ client }) {
     "Copilot-Integration-Id": "vscode-chat",
   };
 
-  /**
-   * Normalizes a domain by removing protocol and trailing slashes
-   */
   function normalizeDomain(url) {
     return url
       .replace(/^https?:\/\//, "")
       .replace(/\/$/, "");
   }
 
-  /**
-   * Gets the base URL from auth data, provider config, or defaults to github.com
-   * Priority: auth data > config > github.com
-   */
-  async function getBaseUrl(providerId, authInfo) {
-    try {
-      // First check auth data (set by core during authentication)
-      if (authInfo && authInfo.enterpriseUrl) {
-        return normalizeDomain(authInfo.enterpriseUrl);
-      }
-
-      // Then check config
-      const config = await client.config.get();
-      const providerConfig = config?.provider?.[providerId];
-      const configUrl = providerConfig?.options?.enterpriseUrl;
-
-      return configUrl ? normalizeDomain(configUrl) : "github.com";
-    } catch {
-      return "github.com";
-    }
-  }
-
-  /**
-   * Constructs URLs based on the base URL (github.com or enterprise)
-   */
-  async function getUrls(providerId, authInfo) {
-    const baseUrl = await getBaseUrl(providerId, authInfo);
-
+  function getUrls(domain) {
     return {
-      DEVICE_CODE_URL: `https://${baseUrl}/login/device/code`,
-      ACCESS_TOKEN_URL: `https://${baseUrl}/login/oauth/access_token`,
-      COPILOT_API_KEY_URL: `https://api.${baseUrl}/copilot_internal/v2/token`,
+      DEVICE_CODE_URL: `https://${domain}/login/device/code`,
+      ACCESS_TOKEN_URL: `https://${domain}/login/oauth/access_token`,
+      COPILOT_API_KEY_URL: `https://api.${domain}/copilot_internal/v2/token`,
     };
   }
 
   return {
     auth: {
-      provider: "github-copilot",
+      provider: providerId,
       loader: async (getAuth, provider) => {
         let info = await getAuth();
         if (!info || info.type !== "oauth") return {};
@@ -70,13 +37,24 @@ export async function CopilotAuthPlugin({ client }) {
           }
         }
 
+        // For enterprise, set baseURL dynamically based on enterpriseUrl in auth data
+        const enterpriseUrl = info.enterpriseUrl;
+        const baseURL = enterpriseUrl
+          ? `https://copilot-api.${normalizeDomain(enterpriseUrl)}`
+          : undefined;
+
         return {
+          ...(baseURL && { baseURL }),
           apiKey: "",
           async fetch(input, init) {
             const info = await getAuth();
             if (info.type !== "oauth") return {};
             if (!info.access || info.expires < Date.now()) {
-              const urls = await getUrls(provider.id, info);
+              const domain = info.enterpriseUrl
+                ? normalizeDomain(info.enterpriseUrl)
+                : "github.com";
+              const urls = getUrls(domain);
+
               const response = await fetch(urls.COPILOT_API_KEY_URL, {
                 headers: {
                   Accept: "application/json",
@@ -98,6 +76,7 @@ export async function CopilotAuthPlugin({ client }) {
                   refresh: info.refresh,
                   access: tokenData.token,
                   expires: tokenData.expires_at * 1000,
+                  ...(info.enterpriseUrl && { enterpriseUrl: info.enterpriseUrl }),
                 },
               });
               info.access = tokenData.token;
@@ -138,32 +117,65 @@ export async function CopilotAuthPlugin({ client }) {
           },
         };
       },
-      methods: [
-        {
-          label: "Login with GitHub",
-          type: "oauth",
-          authorize: async () => {
-            // During authorize, read from config only (no auth data exists yet)
-            const urls = await getUrls("github-copilot", null);
-            const deviceResponse = await fetch(urls.DEVICE_CODE_URL, {
-              method: "POST",
-              headers: {
-                Accept: "application/json",
-                "Content-Type": "application/json",
-                "User-Agent": "GitHubCopilotChat/0.35.0",
-              },
-              body: JSON.stringify({
-                client_id: CLIENT_ID,
-                scope: "read:user",
-              }),
-            });
-            const deviceData = await deviceResponse.json();
-            return {
-              url: deviceData.verification_uri,
-              instructions: `Enter code: ${deviceData.user_code}`,
-              method: "auto",
-              callback: async () => {
+      methods: isEnterprise
+        ? [
+            {
+              type: "custom",
+              label: "Login with GitHub Enterprise",
+              prompts: [
+                {
+                  key: "enterpriseUrl",
+                  message: "Enter your GitHub Enterprise URL or domain",
+                  placeholder: "github.company.com or https://github.company.com",
+                  validate: (value) => {
+                    if (!value) return "URL or domain is required";
+                    try {
+                      const url = value.includes("://")
+                        ? new URL(value)
+                        : new URL(`https://${value}`);
+                      if (!url.hostname)
+                        return "Please enter a valid URL or domain";
+                      return undefined;
+                    } catch {
+                      return "Please enter a valid URL (e.g., github.company.com)";
+                    }
+                  },
+                },
+              ],
+              async authorize(inputs) {
+                const enterpriseUrl = inputs.enterpriseUrl;
+                const domain = normalizeDomain(enterpriseUrl);
+                const urls = getUrls(domain);
+
+                const deviceResponse = await fetch(urls.DEVICE_CODE_URL, {
+                  method: "POST",
+                  headers: {
+                    Accept: "application/json",
+                    "Content-Type": "application/json",
+                    "User-Agent": "GitHubCopilotChat/0.35.0",
+                  },
+                  body: JSON.stringify({
+                    client_id: CLIENT_ID,
+                    scope: "read:user",
+                  }),
+                });
+
+                if (!deviceResponse.ok) {
+                  return { type: "failed" };
+                }
+
+                const deviceData = await deviceResponse.json();
+
+                // Display URL and code for user
+                console.log(`Go to: ${deviceData.verification_uri}`);
+                console.log(`Enter code: ${deviceData.user_code}`);
+
+                // Poll for authorization
                 while (true) {
+                  await new Promise((resolve) =>
+                    setTimeout(resolve, (deviceData.interval || 5) * 1000),
+                  );
+
                   const response = await fetch(urls.ACCESS_TOKEN_URL, {
                     method: "POST",
                     headers: {
@@ -186,31 +198,116 @@ export async function CopilotAuthPlugin({ client }) {
                   if (data.access_token) {
                     return {
                       type: "success",
+                      auth_type: "oauth",
                       refresh: data.access_token,
                       access: "",
                       expires: 0,
+                      enterpriseUrl: domain,
                     };
                   }
 
                   if (data.error === "authorization_pending") {
-                    await new Promise((resolve) =>
-                      setTimeout(resolve, deviceData.interval * 1000),
-                    );
                     continue;
                   }
 
                   if (data.error) return { type: "failed" };
-
-                  await new Promise((resolve) =>
-                    setTimeout(resolve, deviceData.interval * 1000),
-                  );
-                  continue;
                 }
               },
-            };
-          },
-        },
-      ],
+            },
+          ]
+        : [
+            {
+              type: "oauth",
+              label: "Login with GitHub",
+              authorize: async () => {
+                const urls = getUrls("github.com");
+
+                const deviceResponse = await fetch(urls.DEVICE_CODE_URL, {
+                  method: "POST",
+                  headers: {
+                    Accept: "application/json",
+                    "Content-Type": "application/json",
+                    "User-Agent": "GitHubCopilotChat/0.35.0",
+                  },
+                  body: JSON.stringify({
+                    client_id: CLIENT_ID,
+                    scope: "read:user",
+                  }),
+                });
+                const deviceData = await deviceResponse.json();
+                return {
+                  url: deviceData.verification_uri,
+                  instructions: `Enter code: ${deviceData.user_code}`,
+                  method: "auto",
+                  callback: async () => {
+                    while (true) {
+                      const response = await fetch(urls.ACCESS_TOKEN_URL, {
+                        method: "POST",
+                        headers: {
+                          Accept: "application/json",
+                          "Content-Type": "application/json",
+                          "User-Agent": "GitHubCopilotChat/0.35.0",
+                        },
+                        body: JSON.stringify({
+                          client_id: CLIENT_ID,
+                          device_code: deviceData.device_code,
+                          grant_type:
+                            "urn:ietf:params:oauth:grant-type:device_code",
+                        }),
+                      });
+
+                      if (!response.ok) return { type: "failed" };
+
+                      const data = await response.json();
+
+                      if (data.access_token) {
+                        return {
+                          type: "success",
+                          refresh: data.access_token,
+                          access: "",
+                          expires: 0,
+                        };
+                      }
+
+                      if (data.error === "authorization_pending") {
+                        await new Promise((resolve) =>
+                          setTimeout(resolve, deviceData.interval * 1000),
+                        );
+                        continue;
+                      }
+
+                      if (data.error) return { type: "failed" };
+
+                      await new Promise((resolve) =>
+                        setTimeout(resolve, deviceData.interval * 1000),
+                      );
+                      continue;
+                    }
+                  },
+                };
+              },
+            },
+          ],
     },
   };
+}
+
+/**
+ * @type {import('@opencode-ai/plugin').Plugin}
+ */
+export async function CopilotAuthPlugin({ client }) {
+  return createCopilotPlugin(client, {
+    providerId: "github-copilot",
+    isEnterprise: false,
+  });
+}
+
+/**
+ * @type {import('@opencode-ai/plugin').Plugin}
+ */
+export async function CopilotEnterpriseAuthPlugin({ client }) {
+  return createCopilotPlugin(client, {
+    providerId: "github-copilot-enterprise",
+    isEnterprise: true,
+  });
 }

@@ -3,16 +3,56 @@
  */
 export async function CopilotAuthPlugin({ client }) {
   const CLIENT_ID = "Iv1.b507a08c87ecfe98";
-  const DEVICE_CODE_URL = "https://github.com/login/device/code";
-  const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
-  const COPILOT_API_KEY_URL =
-    "https://api.github.com/copilot_internal/v2/token";
   const HEADERS = {
     "User-Agent": "GitHubCopilotChat/0.35.0",
     "Editor-Version": "vscode/1.99.3",
     "Editor-Plugin-Version": "copilot-chat/0.35.0",
     "Copilot-Integration-Id": "vscode-chat",
   };
+
+  /**
+   * Normalizes a domain by removing protocol and trailing slashes
+   */
+  function normalizeDomain(url) {
+    return url
+      .replace(/^https?:\/\//, "")
+      .replace(/\/$/, "");
+  }
+
+  /**
+   * Gets the base URL from auth data, provider config, or defaults to github.com
+   * Priority: auth data > config > github.com
+   */
+  async function getBaseUrl(providerId, authInfo) {
+    try {
+      // First check auth data (set by core during authentication)
+      if (authInfo && authInfo.enterpriseUrl) {
+        return normalizeDomain(authInfo.enterpriseUrl);
+      }
+
+      // Then check config
+      const config = await client.config.get();
+      const providerConfig = config?.provider?.[providerId];
+      const configUrl = providerConfig?.options?.enterpriseUrl;
+
+      return configUrl ? normalizeDomain(configUrl) : "github.com";
+    } catch {
+      return "github.com";
+    }
+  }
+
+  /**
+   * Constructs URLs based on the base URL (github.com or enterprise)
+   */
+  async function getUrls(providerId, authInfo) {
+    const baseUrl = await getBaseUrl(providerId, authInfo);
+
+    return {
+      DEVICE_CODE_URL: `https://${baseUrl}/login/device/code`,
+      ACCESS_TOKEN_URL: `https://${baseUrl}/login/oauth/access_token`,
+      COPILOT_API_KEY_URL: `https://api.${baseUrl}/copilot_internal/v2/token`,
+    };
+  }
 
   return {
     auth: {
@@ -36,7 +76,8 @@ export async function CopilotAuthPlugin({ client }) {
             const info = await getAuth();
             if (info.type !== "oauth") return {};
             if (!info.access || info.expires < Date.now()) {
-              const response = await fetch(COPILOT_API_KEY_URL, {
+              const urls = await getUrls(provider.id, info);
+              const response = await fetch(urls.COPILOT_API_KEY_URL, {
                 headers: {
                   Accept: "application/json",
                   Authorization: `Bearer ${info.refresh}`,
@@ -102,7 +143,9 @@ export async function CopilotAuthPlugin({ client }) {
           label: "Login with GitHub",
           type: "oauth",
           authorize: async () => {
-            const deviceResponse = await fetch(DEVICE_CODE_URL, {
+            // During authorize, read from config only (no auth data exists yet)
+            const urls = await getUrls("github-copilot", null);
+            const deviceResponse = await fetch(urls.DEVICE_CODE_URL, {
               method: "POST",
               headers: {
                 Accept: "application/json",
@@ -121,7 +164,7 @@ export async function CopilotAuthPlugin({ client }) {
               method: "auto",
               callback: async () => {
                 while (true) {
-                  const response = await fetch(ACCESS_TOKEN_URL, {
+                  const response = await fetch(urls.ACCESS_TOKEN_URL, {
                     method: "POST",
                     headers: {
                       Accept: "application/json",

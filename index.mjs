@@ -40,14 +40,14 @@ export async function CopilotAuthPlugin({ client }) {
           }
         }
 
-        // For enterprise, set baseURL dynamically based on enterpriseUrl in auth data
+        // Set baseURL based on deployment type
         const enterpriseUrl = info.enterpriseUrl;
         const baseURL = enterpriseUrl
           ? `https://copilot-api.${normalizeDomain(enterpriseUrl)}`
-          : undefined;
+          : "https://api.githubcopilot.com";
 
         return {
-          ...(baseURL && { baseURL }),
+          baseURL,
           apiKey: "",
           async fetch(input, init) {
             const info = await getAuth();
@@ -122,7 +122,7 @@ export async function CopilotAuthPlugin({ client }) {
       },
       methods: [
         {
-          type: "custom",
+          type: "oauth",
           label: "Login with GitHub Copilot",
           prompts: [
             {
@@ -163,8 +163,8 @@ export async function CopilotAuthPlugin({ client }) {
               },
             },
           ],
-          async authorize(inputs) {
-            const deploymentType = inputs.deploymentType;
+          async authorize(inputs = {}) {
+            const deploymentType = inputs.deploymentType || "github.com";
 
             let domain = "github.com";
             let actualProvider = "github-copilot";
@@ -191,61 +191,73 @@ export async function CopilotAuthPlugin({ client }) {
             });
 
             if (!deviceResponse.ok) {
-              return { type: "failed" };
+              throw new Error("Failed to initiate device authorization");
             }
 
             const deviceData = await deviceResponse.json();
 
-            console.log(`Go to: ${deviceData.verification_uri}`);
-            console.log(`Enter code: ${deviceData.user_code}`);
+            return {
+              url: deviceData.verification_uri,
+              instructions: `Enter code: ${deviceData.user_code}`,
+              method: "auto",
+              callback: async () => {
+                const maxAttempts = Math.ceil(
+                  (deviceData.expires_in || 900) / (deviceData.interval || 5)
+                );
+                let attempts = 0;
 
-            while (true) {
-              await new Promise((resolve) =>
-                setTimeout(resolve, (deviceData.interval || 5) * 1000),
-              );
+                while (attempts < maxAttempts) {
+                  await new Promise((resolve) =>
+                    setTimeout(resolve, (deviceData.interval || 5) * 1000)
+                  );
 
-              const response = await fetch(urls.ACCESS_TOKEN_URL, {
-                method: "POST",
-                headers: {
-                  Accept: "application/json",
-                  "Content-Type": "application/json",
-                  "User-Agent": "GitHubCopilotChat/0.35.0",
-                },
-                body: JSON.stringify({
-                  client_id: CLIENT_ID,
-                  device_code: deviceData.device_code,
-                  grant_type:
-                    "urn:ietf:params:oauth:grant-type:device_code",
-                }),
-              });
+                  const response = await fetch(urls.ACCESS_TOKEN_URL, {
+                    method: "POST",
+                    headers: {
+                      Accept: "application/json",
+                      "Content-Type": "application/json",
+                      "User-Agent": "GitHubCopilotChat/0.35.0",
+                    },
+                    body: JSON.stringify({
+                      client_id: CLIENT_ID,
+                      device_code: deviceData.device_code,
+                      grant_type:
+                        "urn:ietf:params:oauth:grant-type:device_code",
+                    }),
+                  });
 
-              if (!response.ok) return { type: "failed" };
+                  if (!response.ok) return { type: "failed" };
 
-              const data = await response.json();
+                  const data = await response.json();
 
-              if (data.access_token) {
-                const result = {
-                  type: "success",
-                  auth_type: "oauth",
-                  refresh: data.access_token,
-                  access: "",
-                  expires: 0,
-                };
+                  if (data.access_token) {
+                    const result = {
+                      type: "success",
+                      refresh: data.access_token,
+                      access: "",
+                      expires: 0,
+                    };
 
-                if (actualProvider === "github-copilot-enterprise") {
-                  result.provider = "github-copilot-enterprise";
-                  result.enterpriseUrl = domain;
+                    if (actualProvider === "github-copilot-enterprise") {
+                      result.provider = "github-copilot-enterprise";
+                      result.enterpriseUrl = domain;
+                    }
+
+                    return result;
+                  }
+
+                  if (data.error === "authorization_pending") {
+                    attempts++;
+                    continue;
+                  }
+
+                  if (data.error) return { type: "failed" };
                 }
 
-                return result;
-              }
-
-              if (data.error === "authorization_pending") {
-                continue;
-              }
-
-              if (data.error) return { type: "failed" };
-            }
+                // Timeout
+                return { type: "failed" };
+              },
+            };
           },
         },
       ],

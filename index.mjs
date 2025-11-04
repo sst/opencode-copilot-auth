@@ -70,9 +70,12 @@ export async function CopilotAuthPlugin({ client }) {
 
               const tokenData = await response.json();
 
+              const saveProviderID = info.enterpriseUrl
+                ? "github-copilot-enterprise"
+                : "github-copilot";
               await client.auth.set({
                 path: {
-                  id: provider.id,
+                  id: saveProviderID,
                 },
                 body: {
                   type: "oauth",

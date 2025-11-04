@@ -3,16 +3,26 @@
  */
 export async function CopilotAuthPlugin({ client }) {
   const CLIENT_ID = "Iv1.b507a08c87ecfe98";
-  const DEVICE_CODE_URL = "https://github.com/login/device/code";
-  const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
-  const COPILOT_API_KEY_URL =
-    "https://api.github.com/copilot_internal/v2/token";
   const HEADERS = {
     "User-Agent": "GitHubCopilotChat/0.35.0",
     "Editor-Version": "vscode/1.99.3",
     "Editor-Plugin-Version": "copilot-chat/0.35.0",
     "Copilot-Integration-Id": "vscode-chat",
   };
+
+  function normalizeDomain(url) {
+    return url
+      .replace(/^https?:\/\//, "")
+      .replace(/\/$/, "");
+  }
+
+  function getUrls(domain) {
+    return {
+      DEVICE_CODE_URL: `https://${domain}/login/device/code`,
+      ACCESS_TOKEN_URL: `https://${domain}/login/oauth/access_token`,
+      COPILOT_API_KEY_URL: `https://api.${domain}/copilot_internal/v2/token`,
+    };
+  }
 
   return {
     auth: {
@@ -30,13 +40,25 @@ export async function CopilotAuthPlugin({ client }) {
           }
         }
 
+        // Set baseURL based on deployment type
+        const enterpriseUrl = info.enterpriseUrl;
+        const baseURL = enterpriseUrl
+          ? `https://copilot-api.${normalizeDomain(enterpriseUrl)}`
+          : "https://api.githubcopilot.com";
+
         return {
+          baseURL,
           apiKey: "",
           async fetch(input, init) {
             const info = await getAuth();
             if (info.type !== "oauth") return {};
             if (!info.access || info.expires < Date.now()) {
-              const response = await fetch(COPILOT_API_KEY_URL, {
+              const domain = info.enterpriseUrl
+                ? normalizeDomain(info.enterpriseUrl)
+                : "github.com";
+              const urls = getUrls(domain);
+
+              const response = await fetch(urls.COPILOT_API_KEY_URL, {
                 headers: {
                   Accept: "application/json",
                   Authorization: `Bearer ${info.refresh}`,
@@ -48,15 +70,19 @@ export async function CopilotAuthPlugin({ client }) {
 
               const tokenData = await response.json();
 
+              const saveProviderID = info.enterpriseUrl
+                ? "github-copilot-enterprise"
+                : "github-copilot";
               await client.auth.set({
                 path: {
-                  id: provider.id,
+                  id: saveProviderID,
                 },
                 body: {
                   type: "oauth",
                   refresh: info.refresh,
                   access: tokenData.token,
                   expires: tokenData.expires_at * 1000,
+                  ...(info.enterpriseUrl && { enterpriseUrl: info.enterpriseUrl }),
                 },
               });
               info.access = tokenData.token;
@@ -99,10 +125,62 @@ export async function CopilotAuthPlugin({ client }) {
       },
       methods: [
         {
-          label: "Login with GitHub",
           type: "oauth",
-          authorize: async () => {
-            const deviceResponse = await fetch(DEVICE_CODE_URL, {
+          label: "Login with GitHub Copilot",
+          prompts: [
+            {
+              type: "select",
+              key: "deploymentType",
+              message: "Select GitHub deployment type",
+              options: [
+                {
+                  label: "GitHub.com",
+                  value: "github.com",
+                  hint: "Public",
+                },
+                {
+                  label: "GitHub Enterprise",
+                  value: "enterprise",
+                  hint: "Data residency or self-hosted",
+                },
+              ],
+            },
+            {
+              type: "text",
+              key: "enterpriseUrl",
+              message: "Enter your GitHub Enterprise URL or domain",
+              placeholder: "company.ghe.com or https://company.ghe.com",
+              condition: (inputs) => inputs.deploymentType === "enterprise",
+              validate: (value) => {
+                if (!value) return "URL or domain is required";
+                try {
+                  const url = value.includes("://")
+                    ? new URL(value)
+                    : new URL(`https://${value}`);
+                  if (!url.hostname)
+                    return "Please enter a valid URL or domain";
+                  return undefined;
+                } catch {
+                  return "Please enter a valid URL (e.g., company.ghe.com or https://company.ghe.com)";
+                }
+              },
+            },
+          ],
+          async authorize(inputs = {}) {
+            const deploymentType = inputs.deploymentType || "github.com";
+
+            let domain = "github.com";
+            let actualProvider = "github-copilot";
+
+            if (deploymentType === "enterprise") {
+              const enterpriseUrl = inputs.enterpriseUrl;
+              domain = normalizeDomain(enterpriseUrl);
+              actualProvider = "github-copilot-enterprise";
+            }
+
+            const urls = getUrls(domain);
+
+            const deviceResponse = await fetch(urls.DEVICE_CODE_URL, {
               method: "POST",
               headers: {
                 Accept: "application/json",
@@ -114,14 +192,20 @@ export async function CopilotAuthPlugin({ client }) {
                 scope: "read:user",
               }),
             });
+
+            if (!deviceResponse.ok) {
+              throw new Error("Failed to initiate device authorization");
+            }
+
             const deviceData = await deviceResponse.json();
+
             return {
               url: deviceData.verification_uri,
               instructions: `Enter code: ${deviceData.user_code}`,
               method: "auto",
               callback: async () => {
                 while (true) {
-                  const response = await fetch(ACCESS_TOKEN_URL, {
+                  const response = await fetch(urls.ACCESS_TOKEN_URL, {
                     method: "POST",
                     headers: {
                       Accept: "application/json",
@@ -141,12 +225,19 @@ export async function CopilotAuthPlugin({ client }) {
                   const data = await response.json();
 
                   if (data.access_token) {
-                    return {
+                    const result = {
                       type: "success",
                       refresh: data.access_token,
                       access: "",
                       expires: 0,
                     };
+
+                    if (actualProvider === "github-copilot-enterprise") {
+                      result.provider = "github-copilot-enterprise";
+                      result.enterpriseUrl = domain;
+                    }
+
+                    return result;
                   }
 
                   if (data.error === "authorization_pending") {

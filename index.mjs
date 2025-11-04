@@ -204,16 +204,7 @@ export async function CopilotAuthPlugin({ client }) {
               instructions: `Enter code: ${deviceData.user_code}`,
               method: "auto",
               callback: async () => {
-                const maxAttempts = Math.ceil(
-                  (deviceData.expires_in || 900) / (deviceData.interval || 5)
-                );
-                let attempts = 0;
-
-                while (attempts < maxAttempts) {
-                  await new Promise((resolve) =>
-                    setTimeout(resolve, (deviceData.interval || 5) * 1000)
-                  );
-
+                while (true) {
                   const response = await fetch(urls.ACCESS_TOKEN_URL, {
                     method: "POST",
                     headers: {
@@ -250,15 +241,19 @@ export async function CopilotAuthPlugin({ client }) {
                   }
 
                   if (data.error === "authorization_pending") {
-                    attempts++;
+                    await new Promise((resolve) =>
+                      setTimeout(resolve, deviceData.interval * 1000),
+                    );
                     continue;
                   }
 
                   if (data.error) return { type: "failed" };
-                }
 
-                // Timeout
-                return { type: "failed" };
+                  await new Promise((resolve) =>
+                    setTimeout(resolve, deviceData.interval * 1000),
+                  );
+                  continue;
+                }
               },
             };
           },

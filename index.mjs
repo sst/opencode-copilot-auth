@@ -4,16 +4,14 @@
 export async function CopilotAuthPlugin({ client }) {
   const CLIENT_ID = "Iv1.b507a08c87ecfe98";
   const HEADERS = {
-    "User-Agent": "GitHubCopilotChat/0.35.0",
-    "Editor-Version": "vscode/1.99.3",
-    "Editor-Plugin-Version": "copilot-chat/0.35.0",
+    "User-Agent": "GitHubCopilotChat/0.32.4",
+    "Editor-Version": "vscode/1.105.1",
+    "Editor-Plugin-Version": "copilot-chat/0.32.4",
     "Copilot-Integration-Id": "vscode-chat",
   };
 
   function normalizeDomain(url) {
-    return url
-      .replace(/^https?:\/\//, "")
-      .replace(/\/$/, "");
+    return url.replace(/^https?:\/\//, "").replace(/\/$/, "");
   }
 
   function getUrls(domain) {
@@ -82,7 +80,9 @@ export async function CopilotAuthPlugin({ client }) {
                   refresh: info.refresh,
                   access: tokenData.token,
                   expires: tokenData.expires_at * 1000,
-                  ...(info.enterpriseUrl && { enterpriseUrl: info.enterpriseUrl }),
+                  ...(info.enterpriseUrl && {
+                    enterpriseUrl: info.enterpriseUrl,
+                  }),
                 },
               });
               info.access = tokenData.token;

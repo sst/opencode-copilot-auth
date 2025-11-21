@@ -9,6 +9,7 @@ export async function CopilotAuthPlugin({ client }) {
     "Editor-Plugin-Version": "copilot-chat/0.32.4",
     "Copilot-Integration-Id": "vscode-chat",
   };
+  const RESPONSES_API_ALTERNATE_INPUT_TYPES = ["file_search_call", "computer_call", "computer_call_output", "web_search_call", "function_call", "function_call_output", "image_generation_call", "code_interpreter_call", "local_shell_call", "local_shell_call_output", "mcp_list_tools", "mcp_approval_request", "mcp_approval_response", "mcp_call", "reasoning"];
 
   function normalizeDomain(url) {
     return url.replace(/^https?:\/\//, "").replace(/\/$/, "");
@@ -103,6 +104,16 @@ export async function CopilotAuthPlugin({ client }) {
                     Array.isArray(msg.content) &&
                     msg.content.some((part) => part.type === "image_url"),
                 );
+              }
+
+              if(body?.input) {
+                const lastInput = body.input[body.input.length - 1];
+
+                const isAssistant = lastInput?.role === "assistant";
+                const hasAgentType = lastInput?.type ? RESPONSES_API_ALTERNATE_INPUT_TYPES.includes(lastInput.type) : false;
+                isAgentCall = isAssistant || hasAgentType;
+
+                isVisionRequest = Array.isArray(lastInput?.content) && lastInput.content.some((part) => part.type === "input_image");
               }
             } catch {}
             const headers = {

@@ -81,14 +81,13 @@ export async function CopilotAuthPlugin({ client }) {
               }
 
               if(body?.input) {
-                isAgentCall = body.input.some(
-                  (input) => (input.role && ["assistant"].includes(input.role)) || (input.type && RESPONSES_API_ALTERNATE_INPUT_TYPES.includes(input.type)),
-                )
-                isVisionRequest = body.input.some(
-                  (input) =>
-                    Array.isArray(input.content) &&
-                    input.content.some((part) => part.type === "input_image"),
-                );
+                const lastInput = body.input[body.input.length - 1];
+
+                const isAssistant = lastInput?.role === "assistant";
+                const hasAgentType = lastInput?.type ? RESPONSES_API_ALTERNATE_INPUT_TYPES.includes(lastInput.type) : false;
+                isAgentCall = isAssistant || hasAgentType;
+
+                isVisionRequest = Array.isArray(lastInput?.content) && lastInput.content.some((part) => part.type === "input_image");
               }
             } catch {}
             const headers = {
